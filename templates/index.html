@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuya Device Control</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        // Global lock states
+        let lockedDevices = {};
+        
+        // Initialize lock states from server data
+        function initializeLockStates(devices) {
+            devices.forEach(device => {
+                lockedDevices[device.id] = device.locked || false;
+            });
+        }
+    </script>
+</head>
+<body>
+    <div class="dashboard">
+        <header class="header">
+            <div class="header-left">
+                <h1><i class="fas fa-home"></i> Tuya Smart Home</h1>
+            </div>
+            <div class="header-right">
+                <button class="refresh-btn" onclick="refreshDevices()">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+                <a href="/logout" class="logout-btn">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </a>
+            </div>
+        </header>
+        
+        <div class="device-grid">
+            {% for device in devices %}
+            <div class="device-card" id="device-{{ device.id }}">
+                <div class="device-header">
+                    <h3><i class="fas fa-lightbulb"></i> {{ device.name }}</h3>
+                    <div class="device-actions">
+                        <button class="lock-btn" id="lock-btn-{{ device.id }}" 
+                                onclick="toggleLock('{{ device.id }}')" 
+                                title="Lock/Unlock device"
+                                style="background-color: {% if device.locked %}#4CAF50{% else %}#e74c3c{% endif %}">
+                            <i class="fas {% if device.locked %}fa-lock-open{% else %}fa-lock{% endif %}"></i>
+                        </button>
+                        <div class="switch-container {% if device.locked %}locked{% endif %}">
+                            <label class="switch">
+                                <input type="checkbox" id="toggle-{{ device.id }}" 
+                                       onchange="controlDevice('{{ device.id }}', this.checked ? 1 : 0)" 
+                                       {% if device.data.state %}checked{% endif %}
+                                       {% if device.locked %}disabled{% endif %}>
+                                <span class="slider"></span>
+                            </label>
+                            {% if device.locked %}
+                            <div class="lock-overlay" title="Device is locked">
+                                <i class="fas fa-lock"></i>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="device-info">
+                    <p><i class="fas fa-fingerprint"></i> {{ device.id }}</p>
+                    <p><i class="fas fa-microchip"></i> {{ device.dev_type }}</p>
+                    <p class="device-state">
+                        <i class="fas fa-power-off"></i> 
+                        Status: <span class="state-value">{% if device.data.state %}ON{% else %}OFF{% endif %}</span>
+                    </p>
+                </div>
+                
+                <div class="lock-status" id="lock-status-{{ device.id }}"
+                     style="color: {% if device.locked %}#e74c3c{% else %}#4CAF50{% endif %}">
+                    <i class="fas {% if device.locked %}fa-lock{% else %}fa-lock-open{% endif %}"></i>
+                    {% if device.locked %}Locked (prevent accidental changes){% else %}Unlocked{% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="no-devices">
+                <i class="fas fa-exclamation-triangle"></i>
+                <h3>No devices found</h3>
+                <p>Try refreshing or check your Tuya account</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <script>
+        // Initialize lock states from server data
+        initializeLockStates({{ devices | tojson }});
+        
+        // Toggle device lock state and save to server
+        function toggleLock(deviceId) {
+            const newLockState = !lockedDevices[deviceId];
+            
+            // Update UI immediately for better responsiveness
+            updateLockUI(deviceId, newLockState);
+            
+            // Save to server
+            fetch('/set_lock', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    device_id: deviceId, 
+                    locked: newLockState 
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.success) {
+                    // Revert UI if server save failed
+                    updateLockUI(deviceId, !newLockState);
+                    alert('Failed to save lock state');
+                }
+            })
+            .catch(err => {
+                // Revert UI on network error
+                updateLockUI(deviceId, !newLockState);
+                alert('Network error. Please try again.');
+            });
+        }
+        
+        // Update lock UI elements
+        function updateLockUI(deviceId, locked) {
+            // Update global state
+            lockedDevices[deviceId] = locked;
+            
+            // Update lock button
+            const lockBtn = document.getElementById(`lock-btn-${deviceId}`);
+            lockBtn.innerHTML = locked ? 
+                '<i class="fas fa-lock-open"></i>' : 
+                '<i class="fas fa-lock"></i>';
+            lockBtn.style.backgroundColor = locked ? '#4CAF50' : '#e74c3c';
+            
+            // Update toggle switch
+            const toggle = document.getElementById(`toggle-${deviceId}`);
+            toggle.disabled = locked;
+            
+            // Update lock overlay
+            const switchContainer = document.querySelector(`#toggle-${deviceId}`).closest('.switch-container');
+            if (locked) {
+                if (!switchContainer.querySelector('.lock-overlay')) {
+                    const lockOverlay = document.createElement('div');
+                    lockOverlay.className = 'lock-overlay';
+                    lockOverlay.title = 'Device is locked';
+                    lockOverlay.innerHTML = '<i class="fas fa-lock"></i>';
+                    switchContainer.appendChild(lockOverlay);
+                }
+            } else {
+                const overlay = switchContainer.querySelector('.lock-overlay');
+                if (overlay) overlay.remove();
+            }
+            
+            // Update status text
+            const status = document.getElementById(`lock-status-${deviceId}`);
+            status.innerHTML = locked ? 
+                '<i class="fas fa-lock"></i> Locked (prevent accidental changes)' : 
+                '<i class="fas fa-lock-open"></i> Unlocked';
+            status.style.color = locked ? '#e74c3c' : '#4CAF50';
+        }
+        
+        // Control device state
+        async function controlDevice(deviceId, state) {
+            if (lockedDevices[deviceId]) {
+                alert('Device is locked. Unlock it to make changes.');
+                // Reset the toggle to previous state
+                const toggle = document.getElementById(`toggle-${deviceId}`);
+                toggle.checked = !toggle.checked;
+                return;
+            }
+            
+            try {
+                const response = await fetch('/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device_id: deviceId, state: state })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    // Update status text after successful control
+                    const stateElement = document.querySelector(`#device-${deviceId} .state-value`);
+                    if (stateElement) {
+                        stateElement.textContent = state ? 'ON' : 'OFF';
+                    }
+                } else {
+                    alert('Control failed: ' + (data.message || 'Unknown error'));
+                    // Reset the toggle on error
+                    const toggle = document.getElementById(`toggle-${deviceId}`);
+                    toggle.checked = !toggle.checked;
+                }
+            } catch (err) {
+                alert('Network error. Please try again.');
+                const toggle = document.getElementById(`toggle-${deviceId}`);
+                toggle.checked = !toggle.checked;
+            }
+        }
+        
+        // Refresh device list
+        async function refreshDevices() {
+            try {
+                const response = await fetch('/refresh');
+                const data = await response.json();
+                
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Refresh failed');
+                }
+            } catch (err) {
+                alert('Network error. Please try again.');
+            }
+        }
+    </script>
+</body>
+</html>
