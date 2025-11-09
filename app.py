@@ -119,4 +119,18 @@ def set_lock_state():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Enable hot reload with debug mode
+    # use_reloader=True enables automatic reloading when code changes
+    # extra_files can be used to watch additional file types
+    app.run(
+        host='0.0.0.0', 
+        port=5000, 
+        debug=True,
+        use_reloader=True,
+        extra_files=[
+            'templates/index.html',
+            'templates/login.html',
+            'static/style.css',
+            'tuyaApi.py'
+        ]
+    )
